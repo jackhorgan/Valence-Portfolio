@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createClient } from '@supabase/supabase-js';
 import {
   Activity, ArrowDownLeft, ArrowUpRight, BarChart3, Bell, CalendarDays,
   ChevronDown, CircleDollarSign, ClipboardList, Download, FileText, LayoutDashboard,
@@ -116,7 +117,109 @@ function SnapshotModal({onClose,onSave}){const [f,setF]=useState({date:new Date(
 // A lightweight effect-like interception is implemented below by wrapping the dashboard page action.
 const _OriginalApp=App;
 function Root(){const [key,setKey]=useState(0); return <AppWithSnapshot key={key}/>}
-function AppWithSnapshot(){const [snapshotOpen,setSnapshotOpen]=useState(false); const [state,setState]=useState(loadState); const [page,setPage]=useState('dashboard'); const [modal,setModal]=useState(null); const [menuOpen,setMenuOpen]=useState(false); const currency=state.currency; const updateState=(next)=>{setState(next);localStorage.setItem(STORAGE,JSON.stringify(next))}; const positions=useMemo(()=>state.holdings.map(h=>{const value=h.shares*h.price,cost=h.shares*h.avgCost;return {...h,value,cost,pl:value-cost,plPct:cost?((value-cost)/cost)*100:0}}),[state.holdings]); const totalInvested=positions.reduce((a,p)=>a+p.cost,0), totalValue=positions.reduce((a,p)=>a+p.value,0)+state.cash, unrealized=positions.reduce((a,p)=>a+p.pl,0), perfPct=totalInvested?unrealized/totalInvested*100:0, annualIncome=positions.reduce((a,p)=>a+p.value*((p.dividendYield||0)/100),0), allocation=positions.map(p=>({...p,weight:totalValue?p.value/totalValue*100:0})).sort((a,b)=>b.weight-a.weight);
- const saveJSON=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='valence-backup.json';a.click();URL.revokeObjectURL(a.href)}; const importJSON=(file)=>{const r=new FileReader();r.onload=()=>{try{updateState(JSON.parse(r.result));alert('Imported.')}catch{alert('Invalid backup')}};r.readAsText(file)}; const nav=p=>{setPage(p);setMenuOpen(false)};
- return <div className="app"><aside className={`sidebar ${menuOpen?'open':''}`}><div className="brand"><div className="brandmark">V</div><div><div className="brandname">VALENCE</div><div className="brandtag">PORTFOLIO OS</div></div></div><nav><NavItem icon={<LayoutDashboard size={18}/>} label="Dashboard" active={page==='dashboard'} onClick={()=>nav('dashboard')}/><NavItem icon={<Wallet size={18}/>} label="Holdings" active={page==='holdings'} onClick={()=>nav('holdings')}/><NavItem icon={<ClipboardList size={18}/>} label="Transactions" active={page==='transactions'} onClick={()=>nav('transactions')}/><NavItem icon={<CalendarDays size={18}/>} label="Reports" active={page==='reports'} onClick={()=>nav('reports')}/></nav><div className="sidebar-bottom"><label className="side-link file-link"><Upload size={18}/>Import backup<input type="file" accept="application/json" onChange={e=>e.target.files[0]&&importJSON(e.target.files[0])}/></label><button className="side-link" onClick={saveJSON}><Download size={18}/>Export backup</button><button className="side-link" onClick={()=>{if(confirm('Reset to demo data?'))updateState({holdings:demoHoldings,transactions:demoTransactions,snapshots:demoSnapshots,cash:1240,currency:'USD'})}}><RefreshCw size={18}/>Reset demo</button><div className="sync-card"><ShieldCheck size={17}/><div><b>Local-first</b><span>Data stays on this device until you export it.</span></div></div></div></aside><main className="main"><header className="topbar"><button className="iconbtn menu-btn" onClick={()=>setMenuOpen(!menuOpen)}><Menu size={20}/></button><div className="crumb"><span>Portfolio</span><ChevronDown size={15}/><b>{page[0].toUpperCase()+page.slice(1)}</b></div><div className="top-actions"><div className="date-pill"><Activity size={15}/> Week of Sep 15, 2026</div><button className="iconbtn"><Bell size={18}/></button><button className="add-btn" onClick={()=>setModal('transaction')}><Plus size={17}/>Add</button></div></header><div className="content">{page==='dashboard'&&<Dashboard state={state} positions={positions} totalValue={totalValue} totalInvested={totalInvested} unrealized={unrealized} perfPct={perfPct} annualIncome={annualIncome} dayMove={0} allocation={allocation} chartData={state.snapshots} currency={currency} setModal={m=>m==='snapshot'?setSnapshotOpen(true):setModal(m)}/>} {page==='holdings'&&<Holdings state={state} positions={positions} totalValue={totalValue} currency={currency} updateState={updateState} setModal={setModal}/>} {page==='transactions'&&<Transactions state={state} currency={currency} setModal={setModal} updateState={updateState}/>} {page==='reports'&&<Reports state={state} currency={currency} positions={positions} totalValue={totalValue} totalInvested={totalInvested} unrealized={unrealized} allocation={allocation} chartData={state.snapshots} setModal={m=>m==='snapshot'?setSnapshotOpen(true):setModal(m)} updateState={updateState}/>}</div></main>{modal==='transaction'&&<TransactionModal state={state} currency={currency} onClose={()=>setModal(null)} onSave={tx=>{updateState({...state,transactions:[tx,...state.transactions]});setModal(null)}}/>}{modal==='holding'&&<HoldingModal onClose={()=>setModal(null)} onSave={h=>{updateState({...state,holdings:[...state.holdings,h]});setModal(null)}}/>}{snapshotOpen&&<SnapshotModal onClose={()=>setSnapshotOpen(false)} onSave={s=>{updateState({...state,snapshots:[...state.snapshots,s].sort((a,b)=>a.date.localeCompare(b.date))});setSnapshotOpen(false)}}/>}</div>}
+function AuthScreen({onReady}){
+ const [mode,setMode]=useState('login');
+ const [email,setEmail]=useState('');
+ const [password,setPassword]=useState('');
+ const [busy,setBusy]=useState(false);
+ const [message,setMessage]=useState('');
+ const submit=async e=>{
+  e.preventDefault(); setBusy(true); setMessage('');
+  const result=mode==='login'
+   ? await supabase.auth.signInWithPassword({email,password})
+   : await supabase.auth.signUp({email,password});
+  setBusy(false);
+  if(result.error){setMessage(result.error.message); return;}
+  if(mode==='signup' && !result.data.session) setMessage('Account created. Check your email to confirm it, then sign in.');
+  else onReady(result.data.session);
+ };
+ return <div className="auth-screen"><div className="auth-card"><div className="brand auth-brand"><div className="brandmark">V</div><div><div className="brandname">VALENCE</div><div className="brandtag">PORTFOLIO OS</div></div></div><h1>{mode==='login'?'Welcome back':'Create your Valence account'}</h1><p className="auth-copy">Your portfolio is securely synced across your devices.</p><form onSubmit={submit}><Field label="Email"><input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="you@example.com" required/></Field><Field label="Password"><input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="At least 6 characters" minLength="6" required/></Field>{message&&<div className="auth-message">{message}</div>}<button className="primary-btn auth-submit" disabled={busy}>{busy?'Please wait…':mode==='login'?'Sign in':'Create account'}</button></form><button className="auth-switch" onClick={()=>{setMode(mode==='login'?'signup':'login');setMessage('')}}>{mode==='login'?'Create a new account':'Already have an account? Sign in'}</button></div></div>
+}
+
+const supabaseUrl=import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const supabase=(supabaseUrl && supabaseKey) ? createClient(supabaseUrl,supabaseKey,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}}) : null;
+
+function AppWithSnapshot(){
+ const [snapshotOpen,setSnapshotOpen]=useState(false);
+ const [state,setState]=useState(loadState);
+ const [page,setPage]=useState('dashboard');
+ const [modal,setModal]=useState(null);
+ const [menuOpen,setMenuOpen]=useState(false);
+ const [session,setSession]=useState(null);
+ const [authLoading,setAuthLoading]=useState(Boolean(supabase));
+ const [syncing,setSyncing]=useState(false);
+ const currency=state.currency;
+
+ useEffect(()=>{
+  if(!supabase){setAuthLoading(false);return;}
+  let active=true;
+  supabase.auth.getSession().then(async ({data})=>{
+   if(!active)return;
+   setSession(data.session);
+   if(data.session) await loadCloud(data.session.user.id);
+   setAuthLoading(false);
+  });
+  const {data:{subscription}}=supabase.auth.onAuthStateChange(async (_event,next)=>{
+   if(!active)return;
+   setSession(next);
+   if(next) await loadCloud(next.user.id);
+  });
+  return()=>{active=false;subscription.unsubscribe()};
+ },[]);
+
+ async function loadCloud(userId){
+  try{
+   const [h,t,s,d]=await Promise.all([
+    supabase.from('holdings').select('*').eq('user_id',userId).order('id'),
+    supabase.from('transactions').select('*').eq('user_id',userId).order('transaction_date',{ascending:false}),
+    supabase.from('portfolio_snapshots').select('*').eq('user_id',userId).order('snapshot_date'),
+    supabase.from('dividends').select('*').eq('user_id',userId).order('payment_date',{ascending:false})
+   ]);
+   const err=[h,t,s,d].find(x=>x.error)?.error;
+   if(err) throw err;
+   const hasCloud=h.data?.length||t.data?.length||s.data?.length||d.data?.length;
+   if(hasCloud){
+    const next={
+     holdings:(h.data||[]).map(x=>({id:String(x.id),ticker:x.ticker,name:x.company_name||x.ticker,assetType:x.asset_type||'Stock',sector:x.sector||'',shares:Number(x.shares),avgCost:Number(x.average_purchase_price),price:Number(x.current_price),dividendYield:Number(x.dividend_yield||0),notes:x.notes||''})),
+     transactions:(t.data||[]).map(x=>({id:String(x.id),date:x.transaction_date,type:x.transaction_type,ticker:x.ticker,quantity:Number(x.quantity||0),price:Number(x.price_per_share||0),fee:Number(x.fee||0),notes:x.notes||''})),
+     snapshots:(s.data||[]).map(x=>({id:String(x.id),date:x.snapshot_date,value:Number(x.portfolio_value||0),deposits:Number(x.net_invested||0)})),
+     cash:1240,currency:state.currency||'USD'
+    };
+    setState(next);localStorage.setItem(STORAGE,JSON.stringify(next));
+   } else {
+    await syncCloud(state,userId);
+   }
+  }catch(err){console.error('Valence cloud load failed',err);}
+ }
+ async function syncCloud(next,userId=session?.user?.id){
+  if(!supabase||!userId)return;
+  setSyncing(true);
+  try{
+   await Promise.all([
+    supabase.from('holdings').delete().eq('user_id',userId),
+    supabase.from('transactions').delete().eq('user_id',userId),
+    supabase.from('portfolio_snapshots').delete().eq('user_id',userId),
+    supabase.from('dividends').delete().eq('user_id',userId)
+   ]);
+   const jobs=[];
+   if(next.holdings.length) jobs.push(supabase.from('holdings').insert(next.holdings.map(h=>({user_id:userId,ticker:h.ticker,company_name:h.name,asset_type:h.assetType||'Stock',sector:h.sector||'',shares:h.shares,average_purchase_price:h.avgCost,current_price:h.price,dividend_yield:h.dividendYield||0,notes:h.notes||''}))));
+   if(next.transactions.length) jobs.push(supabase.from('transactions').insert(next.transactions.map(t=>({user_id:userId,transaction_date:t.date,transaction_type:t.type,ticker:t.ticker,quantity:t.quantity,price_per_share:t.price,fee:t.fee||0,total_value:(t.quantity||0)*(t.price||0),notes:t.notes||''}))));
+   if(next.snapshots.length) jobs.push(supabase.from('portfolio_snapshots').insert(next.snapshots.map(s=>({user_id:userId,snapshot_date:s.date,portfolio_value:s.value,net_invested:s.deposits||0,total_return:0,notes:''}))));
+   const result=await Promise.all(jobs); const err=result.find(x=>x.error)?.error; if(err) throw err;
+  }catch(err){console.error('Valence cloud sync failed',err);}
+  finally{setSyncing(false);}
+ }
+ const updateState=(next)=>{setState(next);localStorage.setItem(STORAGE,JSON.stringify(next));if(session)syncCloud(next)};
+ const signOut=()=>supabase?.auth.signOut();
+ const positions=useMemo(()=>state.holdings.map(h=>{const value=h.shares*h.price,cost=h.shares*h.avgCost;return {...h,value,cost,pl:value-cost,plPct:cost?((value-cost)/cost)*100:0}}),[state.holdings]);
+ const totalInvested=positions.reduce((a,p)=>a+p.cost,0), totalValue=positions.reduce((a,p)=>a+p.value,0)+state.cash, unrealized=positions.reduce((a,p)=>a+p.pl,0), perfPct=totalInvested?unrealized/totalInvested*100:0, annualIncome=positions.reduce((a,p)=>a+p.value*((p.dividendYield||0)/100),0), allocation=positions.map(p=>({...p,weight:totalValue?p.value/totalValue*100:0})).sort((a,b)=>b.weight-a.weight);
+ const saveJSON=()=>{const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='valence-backup.json';a.click();URL.revokeObjectURL(a.href)};
+ const importJSON=file=>{const r=new FileReader();r.onload=()=>{try{updateState(JSON.parse(r.result));alert('Imported.')}catch{alert('Invalid backup')}};r.readAsText(file)};
+ const nav=p=>{setPage(p);setMenuOpen(false)};
+ if(authLoading)return <div className="auth-screen"><div className="auth-card"><div className="brand auth-brand"><div className="brandmark">V</div><div><div className="brandname">VALENCE</div><div className="brandtag">PORTFOLIO OS</div></div></div><p>Connecting securely…</p></div></div>;
+ if(!supabase)return <div className="auth-screen"><div className="auth-card"><h1>Valence configuration needed</h1><p>Supabase environment variables are missing from this deployment.</p></div></div>;
+ if(!session)return <AuthScreen onReady={setSession}/>;
+ return <div className="app"><aside className={`sidebar ${menuOpen?'open':''}`}><div className="brand"><div className="brandmark">V</div><div><div className="brandname">VALENCE</div><div className="brandtag">PORTFOLIO OS</div></div></div><nav><NavItem icon={<LayoutDashboard size={18}/>} label="Dashboard" active={page==='dashboard'} onClick={()=>nav('dashboard')}/><NavItem icon={<Wallet size={18}/>} label="Holdings" active={page==='holdings'} onClick={()=>nav('holdings')}/><NavItem icon={<ClipboardList size={18}/>} label="Transactions" active={page==='transactions'} onClick={()=>nav('transactions')}/><NavItem icon={<CalendarDays size={18}/>} label="Reports" active={page==='reports'} onClick={()=>nav('reports')}/></nav><div className="sidebar-bottom"><label className="side-link file-link"><Upload size={18}/>Import backup<input type="file" accept="application/json" onChange={e=>e.target.files[0]&&importJSON(e.target.files[0])}/></label><button className="side-link" onClick={saveJSON}><Download size={18}/>Export backup</button><button className="side-link" onClick={()=>{if(confirm('Reset to demo data?'))updateState({holdings:demoHoldings,transactions:demoTransactions,snapshots:demoSnapshots,cash:1240,currency:'USD'})}}><RefreshCw size={18}/>Reset demo</button><button className="side-link" onClick={signOut}><X size={18}/>Sign out</button><div className="sync-card"><ShieldCheck size={17}/><div><b>{syncing?'Syncing…':'Cloud synced'}</b><span>Portfolio saved to your Valence account.</span></div></div></div></aside><main className="main"><header className="topbar"><button className="iconbtn menu-btn" onClick={()=>setMenuOpen(!menuOpen)}><Menu size={20}/></button><div className="crumb"><span>Portfolio</span><ChevronDown size={15}/><b>{page[0].toUpperCase()+page.slice(1)}</b></div><div className="top-actions"><div className="date-pill"><Activity size={15}/> Week of Sep 15, 2026</div><button className="iconbtn"><Bell size={18}/></button><button className="add-btn" onClick={()=>setModal('transaction')}><Plus size={17}/>Add</button></div></header><div className="content">{page==='dashboard'&&<Dashboard state={state} positions={positions} totalValue={totalValue} totalInvested={totalInvested} unrealized={unrealized} perfPct={perfPct} annualIncome={annualIncome} dayMove={0} allocation={allocation} chartData={state.snapshots} currency={currency} setModal={m=>m==='snapshot'?setSnapshotOpen(true):setModal(m)}/>} {page==='holdings'&&<Holdings state={state} positions={positions} totalValue={totalValue} currency={currency} updateState={updateState} setModal={setModal}/>} {page==='transactions'&&<Transactions state={state} currency={currency} setModal={setModal} updateState={updateState}/>} {page==='reports'&&<Reports state={state} currency={currency} positions={positions} totalValue={totalValue} totalInvested={totalInvested} unrealized={unrealized} allocation={allocation} chartData={state.snapshots} setModal={m=>m==='snapshot'?setSnapshotOpen(true):setModal(m)} updateState={updateState}/>}</div></main>{modal==='transaction'&&<TransactionModal state={state} currency={currency} onClose={()=>setModal(null)} onSave={tx=>{updateState({...state,transactions:[tx,...state.transactions]});setModal(null)}}/>}{modal==='holding'&&<HoldingModal onClose={()=>setModal(null)} onSave={h=>{updateState({...state,holdings:[...state.holdings,h]});setModal(null)}}/>}{snapshotOpen&&<SnapshotModal onClose={()=>setSnapshotOpen(false)} onSave={s=>{updateState({...state,snapshots:[...state.snapshots,s].sort((a,b)=>a.date.localeCompare(b.date))});setSnapshotOpen(false)}}/>}</div>
+}
 createRoot(document.getElementById('root')).render(<AppWithSnapshot/>);

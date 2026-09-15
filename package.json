@@ -14,7 +14,8 @@
     "react": "latest",
     "react-dom": "latest",
     "recharts": "latest",
-    "vite": "latest"
+    "vite": "latest",
+    "@supabase/supabase-js": "latest"
   },
   "devDependencies": {}
 }
