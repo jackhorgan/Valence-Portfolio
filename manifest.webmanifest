@@ -1,0 +1,9 @@
+{
+  "name": "Valence Portfolio Tracker",
+  "short_name": "Valence",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#080b10",
+  "theme_color": "#0b0f14",
+  "description": "A clean, local-first stock and crypto portfolio tracker."
+}
